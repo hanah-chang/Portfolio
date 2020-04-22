@@ -1,1 +1,1 @@
-# IBM_ML_course
+# Compilation of Data Science Projects
