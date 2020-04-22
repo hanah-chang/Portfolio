@@ -1,0 +1,315 @@
+---
+title: "Model Comparison - logit LDA QDA lasso tree randomforest bagging bartmachine"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+setwd("C:\\Users\\hanah\\Downloads\\data mining")
+gssdata <- read.csv("GSS.2006.csv")
+class(gssdata)
+```
+
+## Introduction 
+
+The goal of this project is to find a model that has the highest proportion of correct predictions in deciding individuals who have a moderate political views. 
+
+This project will primarily use a variable _poliviews_. It represents how individuals place themselves on the seven-point scale on which the political views that people might hold are arranged from extremely liberal (1) to extremely conservative (7). Out of the seven scales, respondents who consider themselves moderate (4), is subset to make a dichotomous binary variable and used for the outcome. Now that all responses fall into one of two categories (moderate and not moderate), classification techniques are mostly used in this project. 
+
+For predictors, I decide to use four continues variables (_educ_: years of education, _prestg80_: occupational prestiage, _realinc_: income, _age_) and six categorical variables (_sex_: male true, _race_: nonwhites true, _marital_: non-married true, _childs_:no children true, _wrkgovt_: working at government true, _reg16_: lived in a rural at the age of 16 true). I chose these predictors on the base of numerous literature that explain strong evidence of relations between views and social/demographic factors (Description of the outcome and predictors is included in the Appendix, at the end of the research). 
+
+The dataset used in this study is 2006 General Social Survey (GSS). GSS is a nationwide survey that collects demographic, behavioral and attitudinal information of residents of United States.
+
+```{r}
+
+vars <- c("polviews","educ", "prestg80", "realinc", "age", "sex", "race",  "marital", "childs", "wrkgovt", "reg16")
+
+d <- gssdata[,vars]
+d <- na.omit(gssdata[,vars])
+
+
+```
+
+```{r}
+# outcome (polview) recode , subset 1, 2 making binaray outcomes)
+
+library(plyr)
+d$polviews <- with(d, polviews == 4)
+d$polviews <- as.numeric(d$polviews)
+
+
+table(d$polviews)
+
+
+d$sex <-  d$sex== 1 #male
+d$sex <- as.factor(d$sex)
+
+d$race <-  d$race == 3 # nonwhite
+d$race <- as.factor(d$race)
+
+d$marital <- with(d, marital == 2 | marital == 3| marital == 4| marital == 5)
+#notmarried
+d$marital <- as.factor(d$marital)
+
+d$childs <- d$childs == 0 #nochild
+d$childs <- as.factor(d$childs)
+
+d$wrkgovt <- d$wrkgovt == 1 # working at government
+d$wrkgovt <- as.factor(d$wrkgovt)
+
+d$reg16 <- with(d, reg16 == 1 | reg16 == 2) #lived at rural 
+d$reg16  <- as.factor(d$reg16 )
+
+```
+
+```{r}
+#devide data into train / test set 
+set.seed(123)
+
+Train <- sample(1:nrow(d), size = 1778, replace = FALSE)
+training <- d[Train, ]
+testing <- d[-Train, ]
+```
+
+## Initial model: Logit, Stepwise Selection
+
+__(Logit)__
+
+
+
+I estimated a logit model in the training data and calculate the proportion of correct predictions in the testing data. The result shows that the function makes 60.46% correct predictions out of total 1,778 cases. 
+```{r}
+logit <- glm(polviews ~ educ + prestg80+ I(log(realinc))+ age + sex + race + marital + childs + wrkgovt + reg16, data = training, family=binomial)
+summary(logit)
+
+p_logit <- predict(logit, newdata = testing, type = "response")
+table(testing$polviews, as.integer(p_logit > 0.5))
+
+mean(testing$polviews == ((p_logit) > 0.5))
+```
+
+__(add a step function to logit regression)__
+
+Forward selection starts with a model that just has an intercept and sequentially adds predictors. Backward selection starts with the full model and sequentially subtracts predictors. The Step() function I used in here uses a combination of both directions and ranks the models by comparing the Aikaike Information Criterion (AIC).
+
+The result shows that the step function dropped 6 predictors (age, race, marital, childs, wrkgov, reg16). When used to predict outcomes in the testing data, this reduced model makes fewer errors. And now I have 1,081 correct cases which account for 60.57% of total cases. Compare to logit model, the proportion of correct predictions in the testing data slightly increased by 0.11%P.
+
+```{r}
+logit2 <- step(logit, trace = FALSE)
+names(coef(logit))
+names(coef(logit2))
+
+p_logit2 <- predict(logit2, newdata = testing,  type="response")
+table(testing$polviews, as.integer(p_logit2 > 0.5))
+mean(testing$polviews == (p_logit2 > 0.5))
+```
+
+## Expended model 1: Linear Discriminant Analysis, Lasso and Generalized Additive Models
+
+The parameter estimates for the logistic regression model are unstable when the classes are well-separated. On the other hand, a linear discriminant analysis (LDA) does not suffer from this problem. Also, If n is small and the distribution of the predictors X is approximately normal in each of the classes, the linear discriminant model is again more stable than the logistic regression model. This is why I used the LDA as a way to improve my initial logit model.
+
+__(Linear Discriminant Analysis / Quadratic Discriminant Analysis)__
+
+I expected that the LDA will yield the smallest possible total number of misclassified observations, irrespective of which class the errors come from. 
+The result shows 1,077 correct predictions (60.57%) in testing data, and this is no better than the logit + step function. 
+
+I also used quadratic discriminant analysis (QDA) approach. While LDA assumes that the observations within each class are drawn from a multivariate Gaussian distribution with a class-specific mean vector and a covariance matrix that is common to all K classes, QDA estimates a separate covariance matrix for each class, for a total of Kp(p+1)/2 parameters. 
+
+The QDA result shows 1,100 correct predictions (61.87%).
+According to the textbook, LDA is popular when we have more than two response classes. In addition, Garrett Grolemund / says QDA is recommended if the training set is very large so that the variance of the classifier is not a major concern, or if the assumption of a common covariance matrix for the K classes is clearly untenable. Since my data is not applied to these cases, the results from LDA and QDA are not much satisfactory. 
+
+```{r}
+library(MASS)
+LDA <- lda(logit2$formula, data = training)
+QDA <- qda(logit2$formula, data = training)
+
+p_LDA <- predict(LDA, newdata = testing)$class
+table(testing$polviews, p_LDA)
+
+p_QDA <- predict(QDA, newdata = testing)$class
+table(testing$polviews, p_QDA)
+```
+
+__(Lasso)__ 
+
+The maximum number of correct predictions is 1,107 (62.26%). In this case, lasso penalization is slightly better than QDA (correct predictions of 1,100).
+```{r}
+library(glmnet)
+
+Lasso <- glmnet(x = model.matrix(logit2)[, -1], y = training$polviews, 
+                 family = "binomial")
+
+
+X <- model.matrix(logit2, data = testing)[, -1]
+correct <- colSums(testing$polviews == (plogis(predict(Lasso, newx = X)) > 0.5))
+
+# Note that lasso yields a sequence of models, so we have to find the best one:
+max(correct) 
+
+```
+
+
+__(Generalized Additive Models)__
+
+I used a gam() function to fit a Generalized Additive Model (GAM)  where _moderate political view_ is the outcome using the predictors from the best model found via step() for the training data. 
+
+The GAM model is: 
+Moderate political views = B0 + f1(education) + f2(occupational prestige) + f3(income) + e
+
+
+After running the gam function, the plots tell us how each spline function changes as the corresponding predictor changes. The curvature of each spline function is estimated in order to fit the (training) data. It looks like all of three continuous variables (education, occupational prestige, and Income) exhibit a non-linear relationship with the outcome (moderate political views), conditional on the other predictors. The last plot for the dichotomous factor variable (sex = male true) shows that the outcome (moderate political views) for women (sex = false) is higher than for male (sex = true); holding other variables fixed.
+
+```{r}
+stopifnot(require(gam))
+
+gam_train <- gam(polviews ~ s(educ) + s(prestg80) + s(log(realinc)) + sex, data = training)
+
+# make Plots
+
+par(mfrow=c(2,2), las = 1, mar = c(5,4,1,1) + .1)
+
+plot(gam_train,col="blue")
+
+```
+
+Since our predictors are non-linear with the outcome, we can take advantage of GAM, because GAM allow us to fit a non-linear fj to each Xj and the non-linear fits can potentially make more accurate predictions for the response Y .
+The average SSR is smaller in the training data (0.2304) than in the testing data (0.2311), which is to be expected given that the parameters underlying the predictions are estimated from the training data in order to minimize the SSR.
+```{r}
+# Predicting the gam model in the training data 
+Yhat_gam00 <- predict(gam_train)
+mean( (training$polviews - Yhat_gam00) ^ 2 )
+
+
+# Predicting the gam model in the testing data 
+Yhat_gam <- predict(gam_train, newdata = testing)
+mean( (testing$polviews - Yhat_gam) ^ 2 )
+```
+
+I also compared mean squared error for logit + step model with a generalized additive model.
+The MSE for logit+step was 0.9923  Compared to the logit model, the GAM provides a better fit in terms of least squares.
+
+```{r}
+MSE_logit2 <- mean( (testing$polviews - 
+                    predict(logit2, newdata = testing)) ^ 2)
+MSE_logit2
+```
+
+## Expended model 2: Tree-based methods
+
+I chose to use tree-based models(plain tree,bagging, random forest, and bart machine) for classification to investigate they fit better than Logit/LDA/QDA/GAM models.
+
+
+__(plain tree + prune.tree)__
+
+The plot shows a classification tree for predicting the moderate political views, based on the number of years of education. As we can see, only one variable (education) is used in tree construction, and the number of terminal nodes is 2. 
+
+The plain tree approach is virtually guaranteed to overfit in the training data and predict poorly in the testing data. To compensate, I utilized a _tree pruning_ after the initial algorithm has terminated to choose the best parts of the original tree. However, in this case, the _tree pruning did not result in minimizing mean squared errors. 
+
+The left-hand branch corresponds to years of education <14.5, and the right-hand branch corresponds to years of education >=14.5. However, regardless of the value of education, a response value of 0(not moderate political view) is predicted because it leads to increased node purity. this model shows accuracy of 62.26 % but failed to predict true negatives.
+
+```{r}
+training$polviews <- as.factor(training$polviews)
+testing$polviews <- as.factor(testing$polviews)
+```
+
+```{r}
+stopifnot(require(tree))
+
+tree_model <- tree(polviews ~ ., data = training)
+summary(tree_model)
+plot(tree_model)
+text(tree_model, pretty = 0)
+
+new_tree <- cv.tree(tree_model, FUN = prune.misclass)
+new_tree$dev
+best_tree <- prune.tree(tree_model, best = 2)
+summary(best_tree)
+
+
+tree_hat <- predict(best_tree, newdata = testing, type = "class")
+table(testing$polviews, tree_hat)
+mean(testing$polviews == tree_hat)
+
+```
+
+__(bagging)__
+
+
+
+```{r}
+stopifnot(require(randomForest))
+
+bagging <- randomForest(polviews ~ ., data = training, mtry = 10, importance = TRUE)
+```
+
+As shown in the plot, we can immediately see that _education_ is the most important factor in terms of the mean decrease in accuracy, and _age/occupational prestige/income/education_ are the most important factor in terms of gini index.
+(The mean decrease in the Gini coefficient is a measure of how each variable contributes to the homogeneity of the nodes and leaves in the resulting random forest)
+```{r}
+varImpPlot(bagging)
+```
+
+Bagging shows 57.59% of correct predictions in the testing data. 
+
+```{r}
+bagging_hat <- predict(bagging, newdata = testing, type="response")
+table(testing$polviews, bagging_hat)
+mean(testing$polviews == bagging_hat)
+```
+
+__(random forest )__
+
+The varImpPlot()shows result similar to bagging. Noticeably, importance of _childs/sex/occupational prestige_ is degreased when using random forest. 
+
+The proportion of correct predictions for random forest slightly better than bagging, the proportion is now 59.11%
+
+```{r}
+stopifnot(require(randomForest))
+
+RForest <- randomForest(polviews ~ ., data = training, importance = TRUE)
+
+varImpPlot(RForest)
+
+RForest_hat <- predict(RForest, newdata = testing, type="response")
+table(testing$polviews, RForest_hat)
+mean(testing$polviews == RForest_hat)
+
+```
+
+__(bart machine)__
+
+ the bart machine is one of the best implementations of the tree approach. 
+ it correctly predicts 60.74% of the testing data. 
+
+```{r}
+options( java.parameters = "-Xmx4g" )
+stopifnot(require(bartMachine))
+
+set_bart_machine_num_cores(parallel::detectCores())
+
+
+bart <- bartMachine(X = training[,c(2,3,4,5,6,7,8,9,10,11)], y = training$polviews, mem_cache_for_speed = FALSE)
+
+bart
+
+bart_hat <- bart_predict_for_test_data(bart_machine = bart, Xtest = testing[,c(2,3,4,5,6,7,8,9,10,11)], ytest = testing$polviews)
+
+table(testing$polviews, bart_hat$y_hat)
+mean(testing$polviews == bart_hat$y_hat)
+```
+
+## Conclusion
+
+Throughout this project, 7 supervised learning techniques (logit + step, LDA, QDA, lasso, plain tree, random forest, bagging, bart machine ) are utilized to find a best predictive solution. 
+
+The predictions of each classification model are as follows. 
+__qda 61.87% > bartmachine 60.74% >  lda 60.57% > logit 60.46% > randomforest 59.11% >bagging 57.59%__ 
+
+(I did not include tree 62.26% correct prediction, because these approaches compensate all true negatives for true positives, resulting 0 case of true negatives. This is not what I want.)
+
+The complex models (i.e. random forests, bart machine, etc) not always provide a significant improvement over the simpler methods (i.e. logit), thus, logit is selected for deployment. 
+
+__(Appendix: Description of the outcome and predictors)__
+
+```{r}
+library(psych)
+describe(d)
+```
