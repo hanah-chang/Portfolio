@@ -1,0 +1,172 @@
+---
+title: "Predicting loan approval"
+author: "Hanah Chang"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+load("dataset.RData")
+str(dataset)
+knitr::opts_chunk$set(echo = TRUE, collapse = TRUE)
+```
+
+```{r}
+library(glmnet)
+library(MASS)
+```
+
+
+# Introduction 
+
+In this project, we are going to find out which model produces the most accurate prediction in terms of deciding whether an individual is get approved for a loan. The dataset is from Kaggle and includes variables such as
+
+- Amount.Requested: The proposed amount for the loan 
+- Debt.To.Income.Ratio: The ratio of the applicant’s debt payments each month to the applicant’s stated monthly income 
+- Zip.Code: The 3-digit zip code of the applicant 
+- State: The state where the applicant lives 
+- Employment.Length: The number of years that the applicant has worked at the same job. 10 indicates at least ten years, 0 indicates less than one year, and -1 indicates unemployed. 
+- y: A binary variable indicating whether the loan was approved
+
+
+# 1. Initial Model: GLM, LDA, QDA, glment 
+
+I chose three variables (Amount.Requested,  Employment.Length, Debt.To.Income.Ratio) to run GLM, LDA, QDA, glment model.
+
+```{r}
+training <-dataset[1:5000, ]
+testing <- dataset[-c(1:5000), ]
+```
+
+
+__(Generalized linear model)__
+The GLM correctly predicted that the loan would be approved 18 times, and that it would be disapproved for 4,299 times. In this case, the logistic regression correctly predicted the approval of the loan 86.34% of the time. 
+
+```{r}
+logit <- glm(y ~ Amount.Requested +  
+               Employment.Length + Debt.To.Income.Ratio, data = training, family = binomial(link = "logit"))
+
+y_hat_logit <- fitted(logit) 
+summary(y_hat_logit)
+
+z_logit <- as.integer(y_hat_logit > 0.5) 
+table(testing$y, z_logit)
+
+mean((testing$y) == z_logit)
+```
+
+
+__(Linear Discriminant Analysis)__
+The LDA correctly predicted that the loan would be approved 35 times, and that it would be disapproved for 4,194 times. In this case, the LDA correctly predicted the approval of the loan 84.58% of the time. 
+
+
+
+```{r}
+
+LDA <- lda(y ~ Amount.Requested + Employment.Length+ Debt.To.Income.Ratio, data = training)
+y_hat_LDA <- predict(LDA)
+summary(y_hat_LDA$posterior)
+
+z_LDA <- y_hat_LDA$class     
+table(testing$y, z_LDA)
+
+mean((testing$y) == z_LDA)
+```
+
+
+__(Quadratic Discriminant Analysis)__
+
+It looks like the QDA predictions does not capture the true relationship between variables 
+
+```{r}
+QDA <- qda(y ~ Amount.Requested + Employment.Length +Debt.To.Income.Ratio , data = training)
+y_hat_QDA <- predict(QDA)
+summary(y_hat_QDA$posterior)
+
+z_QDA <- y_hat_QDA$class    
+table(testing$y, z_QDA)
+
+mean((testing$y) == z_QDA)
+```
+
+
+__(glmnet)__
+
+The result of the glmnet function is 91.68% accuracy.
+The penalization of the fit in the testing data improved the classification accuracy in the testing data.
+
+
+```{r}
+x <- model.matrix(logit)
+y <- testing$y
+
+path2 <- glmnet(x[,-1], y, family = "binomial")
+path2
+
+y_hat_path2 <- predict(path2, newx = x[,-1], type = "response")
+z_path2<- y_hat_path2 > 0.5
+s <- which.max(colSums(apply(z_path2, MARGIN = 2, FUN = `==`, e2 = y)))
+table(y, as.integer(z_path2[,s]))
+
+mean((testing$y) == as.integer(z_path2[,s]))
+```
+
+
+
+
+# 2. Extended Model: Ramdpmforest, Bartmachine 
+
+__(Randomforest)__
+
+Randomforest accurately predicts 93.54% of the testing data. 
+
+```{r}
+stopifnot(require(randomForest))
+
+bagged <- randomForest(y ~ Amount.Requested + Employment.Length  + Debt.To.Income.Ratio, data = training, mtry =10 ,importance = TRUE)
+
+bagged
+```
+
+```{r}
+yhat_bagged <- predict(bagged, newdata = testing, type = "class")
+correct_bg <- mean((testing$y == 1) == (yhat_bagged > 0.5))
+z_bg <- as.integer(yhat_bagged > 0.5)
+table(testing$y, z_bg)
+```
+
+
+
+__(bartmachine)__
+
+for bartmachine, I'm going to use all variables. let's take a look. 
+
+
+```{r}
+options( java.parameters = "-Xmx4g" )
+stopifnot(require(bartMachine))
+set_bart_machine_num_cores(parallel::detectCores())
+
+bart <- bartMachine(X = training[, c("Amount.Requested", "Employment.Length",  "Debt.To.Income.Ratio")], y = training$y)
+
+bart
+```
+
+
+```{r}
+yhat_bart <- predict(bart, new_data = testing[, c("Amount.Requested", "Employment.Length",  "Debt.To.Income.Ratio")], type = "class")
+correct_bt <- mean((testing$y == 1) == (yhat_bart > 0.5))
+z_bt <- as.integer(yhat_bart > 0.5)
+table(testing$y, z_bt)
+```
+
+
+# Conclusion 
+
+In this project, Bartmachine showed the highest proportion of correct predictions, followed closely by randomforest. 
+
+
+
